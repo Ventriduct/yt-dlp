@@ -3481,14 +3481,30 @@ class YoutubeDL:
         fn = self.params.get('download_archive')
         if fn is None:
             return
+
+        vid_ids = []
+
         vid_id = self._make_archive_id(info_dict)
         assert vid_id
+        vid_ids.append(vid_id)
 
-        self.write_debug(f'Adding to archive: {vid_id}')
+        webpageUrl = info_dict.get('webpage_url')
+        originalUrl = info_dict.get('original_url')
+        if (webpageUrl and 'nebula' in webpageUrl.lower()) or (originalUrl and 'nebula' in originalUrl.lower()):
+            video_id = info_dict.get('display_id')
+            assert video_id
+
+            vid_id = make_archive_id('nebula', video_id)
+            assert vid_id
+            vid_ids.append(vid_id)
+
         if is_path_like(fn):
             with locked_file(fn, 'a', encoding='utf-8') as archive_file:
-                archive_file.write(vid_id + '\n')
-        self.archive.add(vid_id)
+                for cur_vid_id in vid_ids:
+                    archive_file.write(cur_vid_id + '\n')
+        for cur_vid_id in vid_ids:
+            self.write_debug(f'Adding to archive: {cur_vid_id}')
+            self.archive.add(cur_vid_id)
 
     @staticmethod
     def format_resolution(format, default='unknown'):
