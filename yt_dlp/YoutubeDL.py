@@ -1459,7 +1459,13 @@ class YoutubeDL:
                                     'and will probably not work.')
 
             temp_id = ie.get_temp_id(url)
-            if temp_id is not None and self.in_download_archive({'id': temp_id, 'ie_key': key}):
+            temp_key = key
+            # print("extract_info, key: {}, url: {}, temp_id: {}".format(key, url, temp_id))
+            match = re.match('^https?://(?:www\.)?rosscreations\.com/video/([^/?#]+)', url)
+            if match:
+                temp_key = 'rosscreations'
+                temp_id = match.group(1)
+            if temp_id is not None and self.in_download_archive({'id': temp_id, 'ie_key': temp_key}):
                 self.to_screen(f'[{key}] {temp_id}: has already been recorded in the archive')
                 if self.params.get('break_on_existing', False):
                     raise ExistingVideoReached()
@@ -3456,10 +3462,12 @@ class YoutubeDL:
         # Future-proof against any change in case
         # and backwards compatibility with prior versions
         extractor = info_dict.get('extractor_key') or info_dict.get('ie_key')  # key in a playlist
+        # print("making archive ID: video_id: {}".format(video_id))
         if extractor is None:
             url = str_or_none(info_dict.get('url'))
             if not url:
                 return
+            # print("url: {}".format(url))
             # Try to find matching extractor for the URL and take its ie_key
             for ie_key, ie in self._ies.items():
                 if ie.suitable(url):
@@ -3470,6 +3478,7 @@ class YoutubeDL:
         return make_archive_id(extractor, video_id)
 
     def in_download_archive(self, info_dict):
+        # print("checking if in archive: info_dict: {}".format(info_dict))
         if not self.archive:
             return False
 
@@ -3490,6 +3499,7 @@ class YoutubeDL:
 
         webpageUrl = info_dict.get('webpage_url')
         originalUrl = info_dict.get('original_url')
+        # print("recording in download archive: webpageUrl: {}, originalUrl: {}".format(webpageUrl, originalUrl))
         if (webpageUrl and 'nebula' in webpageUrl.lower()) or (originalUrl and 'nebula' in originalUrl.lower()):
             video_id = info_dict.get('display_id')
             assert video_id
@@ -3497,6 +3507,19 @@ class YoutubeDL:
             vid_id = make_archive_id('nebula', video_id)
             assert vid_id
             vid_ids.append(vid_id)
+        elif webpageUrl or originalUrl:
+            rxprog = re.compile('^https?://(?:www\.)?rosscreations\.com/video/([^/?#]+)')
+            match = rxprog.match(webpageUrl)
+            if not match and originalUrl:
+                match = rxprog.match(originalUrl)
+            if match:
+                video_id = match.group(1)
+                assert video_id
+
+                vid_id = make_archive_id('rosscreations', video_id)
+                assert vid_id
+                vid_ids.append(vid_id)
+        # print("vid_ids: {}".format(vid_ids))
 
         if is_path_like(fn):
             with locked_file(fn, 'a', encoding='utf-8') as archive_file:
