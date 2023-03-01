@@ -956,7 +956,7 @@ class YoutubeBaseInfoExtractor(InfoExtractor):
 
     @staticmethod
     def is_music_url(url):
-        return re.match(r'https?://music\.youtube\.com/', url) is not None
+        return re.match(r'(https?://)?music\.youtube\.com/', url) is not None
 
     def _extract_video(self, renderer):
         video_id = renderer.get('videoId')
@@ -3776,10 +3776,18 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             if no_video:
                 dct['abr'] = tbr
             if no_audio or no_video:
-                dct['downloader_options'] = {
-                    # Youtube throttles chunks >~10M
-                    'http_chunk_size': 10485760,
-                }
+                CHUNK_SIZE = 10 << 20
+                dct.update({
+                    'protocol': 'http_dash_segments',
+                    'fragments': [{
+                        'url': update_url_query(dct['url'], {
+                            'range': f'{range_start}-{min(range_start + CHUNK_SIZE - 1, dct["filesize"])}'
+                        })
+                    } for range_start in range(0, dct['filesize'], CHUNK_SIZE)]
+                } if dct['filesize'] else {
+                    'downloader_options': {'http_chunk_size': CHUNK_SIZE}  # No longer useful?
+                })
+
                 if dct.get('ext'):
                     dct['container'] = dct['ext'] + '_dash'
 
@@ -4120,7 +4128,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             'thumbnail': traverse_obj(original_thumbnails, (-1, 'url')),
             'description': video_description,
             'uploader': get_first(video_details, 'author'),
-            'uploader_id': self._search_regex(r'/(?:channel/|user/|@)([^/?&#]+)', owner_profile_url, 'uploader id', default=None),
+            'uploader_id': self._search_regex(r'/(?:channel/|user/|(?=@))([^/?&#]+)', owner_profile_url, 'uploader id', default=None),
             'uploader_url': owner_profile_url,
             'channel_id': channel_id,
             'channel_url': format_field(channel_id, None, 'https://www.youtube.com/channel/%s'),
@@ -4458,19 +4466,6 @@ class YoutubeTabBaseInfoExtractor(YoutubeBaseInfoExtractor):
                     info_dict['entries'] = (_smuggle(i, smuggled_data.copy()) for i in info_dict['entries'])
             return info_dict
         return wrapper
-
-    def _extract_channel_id(self, webpage):
-        channel_id = self._html_search_meta(
-            'channelId', webpage, 'channel id', default=None)
-        if channel_id:
-            return channel_id
-        channel_url = self._html_search_meta(
-            ('og:url', 'al:ios:url', 'al:android:url', 'al:web:url',
-             'twitter:url', 'twitter:app:url:iphone', 'twitter:app:url:ipad',
-             'twitter:app:url:googleplay'), webpage, 'channel url')
-        return self._search_regex(
-            r'https?://(?:www\.)?youtube\.com/channel/([^/?#&])+',
-            channel_url, 'channel id')
 
     @staticmethod
     def _extract_basic_item_renderer(item):
@@ -4910,6 +4905,10 @@ class YoutubeTabBaseInfoExtractor(YoutubeBaseInfoExtractor):
         info['view_count'] = self._get_count(playlist_stats, 1)
         if info['view_count'] is None:  # 0 is allowed
             info['view_count'] = self._get_count(playlist_header_renderer, 'viewCountText')
+        if info['view_count'] is None:
+            info['view_count'] = self._get_count(data, (
+                'contents', 'twoColumnBrowseResultsRenderer', 'tabs', ..., 'tabRenderer', 'content', 'sectionListRenderer',
+                'contents', ..., 'itemSectionRenderer', 'contents', ..., 'channelAboutFullMetadataRenderer', 'viewCountText'))
 
         info['playlist_count'] = self._get_count(playlist_stats, 0)
         if info['playlist_count'] is None:  # 0 is allowed
@@ -6129,6 +6128,23 @@ class YoutubeTabIE(YoutubeTabBaseInfoExtractor):
             }
         }],
         'params': {'extract_flat': True},
+    }, {
+        'url': 'https://www.youtube.com/@3blue1brown/about',
+        'info_dict': {
+            'id': 'UCYO_jab_esuFRV4b17AJtAw',
+            'tags': ['Mathematics'],
+            'title': '3Blue1Brown - About',
+            'uploader_url': 'https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw',
+            'channel_follower_count': int,
+            'channel_id': 'UCYO_jab_esuFRV4b17AJtAw',
+            'uploader_id': 'UCYO_jab_esuFRV4b17AJtAw',
+            'channel': '3Blue1Brown',
+            'uploader': '3Blue1Brown',
+            'view_count': int,
+            'channel_url': 'https://www.youtube.com/channel/UCYO_jab_esuFRV4b17AJtAw',
+            'description': 'md5:e1384e8a133307dd10edee76e875d62f',
+        },
+        'playlist_count': 0,
     }]
 
     @classmethod
@@ -6195,6 +6211,8 @@ class YoutubeTabIE(YoutubeTabBaseInfoExtractor):
         original_tab_id, display_id = tab[1:], f'{item_id}{tab}'
         if is_channel and not tab and 'no-youtube-channel-redirect' not in compat_opts:
             url = f'{pre}/videos{post}'
+        if smuggled_data.get('is_music_url'):
+            self.report_warning(f'YouTube Music is not directly supported. Redirecting to {url}')
 
         # Handle both video/playlist URLs
         qs = parse_qs(url)
