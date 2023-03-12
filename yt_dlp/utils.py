@@ -6237,7 +6237,9 @@ class FormatSorter:
         'ie_pref': {'priority': True, 'type': 'extractor'},
         'hasvid': {'priority': True, 'field': 'vcodec', 'type': 'boolean', 'not_in_list': ('none',)},
         'hasaud': {'field': 'acodec', 'type': 'boolean', 'not_in_list': ('none',)},
-        'lang': {'convert': 'float', 'field': 'language_preference', 'default': -1},
+        'language_preference': {'convert': 'float', 'field': 'language_preference', 'default': -1},
+        'lang': {'type': 'ordered', 'field': 'language',
+                 'order': ('en', 'es', 'fr', 'de')}, # TODO: Configurable language preferences
         'quality': {'convert': 'float', 'default': -1},
         'filesize': {'convert': 'bytes'},
         'fs_approx': {'convert': 'bytes', 'field': 'filesize_approx'},
@@ -6262,7 +6264,7 @@ class FormatSorter:
         # Actual field names
         'format_id': {'type': 'alias', 'field': 'id'},
         'preference': {'type': 'alias', 'field': 'ie_pref'},
-        'language_preference': {'type': 'alias', 'field': 'lang'},
+        'language': {'type': 'alias', 'field': 'lang'},
         'source_preference': {'type': 'alias', 'field': 'source'},
         'protocol': {'type': 'alias', 'field': 'proto'},
         'filesize_approx': {'type': 'alias', 'field': 'fs_approx'},
