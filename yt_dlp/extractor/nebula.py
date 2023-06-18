@@ -65,7 +65,7 @@ class NebulaBaseIE(InfoExtractor):
         return response['token']
 
     def _fetch_video_formats(self, slug):
-        stream_info = self._call_nebula_api(f'https://content.watchnebula.com/video/{slug}/stream/',
+        stream_info = self._call_nebula_api(f'https://content.api.nebula.app/video/{slug}/stream/',
                                             video_id=slug,
                                             auth_type='bearer',
                                             note='Fetching video stream info')
@@ -77,7 +77,7 @@ class NebulaBaseIE(InfoExtractor):
         channel_slug = episode['channel_slug']
         channel_title = episode['channel_title']
         return {
-            'id': episode['zype_id'],
+            'id': episode['id'].replace('video_episode:',''),
             'display_id': episode['slug'],
             'formats': fmts,
             'subtitles': subs,
@@ -190,7 +190,7 @@ class NebulaIE(NebulaBaseIE):
     ]
 
     def _fetch_video_metadata(self, slug):
-        return self._call_nebula_api(f'https://content.watchnebula.com/video/{slug}/',
+        return self._call_nebula_api(f'https://content.api.nebula.app/video/{slug}/',
                                      video_id=slug,
                                      auth_type='bearer',
                                      note='Fetching video meta data')
