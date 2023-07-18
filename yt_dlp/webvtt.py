@@ -360,7 +360,14 @@ def parse_fragment(frag_content):
 
     parser = _MatchParser(frag_content.decode())
 
-    yield Magic.parse(parser)
+    magic = Magic.parse(parser)
+    while True:
+        m = parser.consume(Magic._REGEX_META)
+        if m:
+            magic.meta += m.group(0)
+        else:
+            break
+    yield magic
 
     while not parser.match(_REGEX_EOF):
         if parser.consume(_REGEX_BLANK):
