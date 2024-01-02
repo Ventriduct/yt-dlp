@@ -131,7 +131,7 @@ def _get_binary_name():
 
 
 def _get_system_deprecation():
-    MIN_SUPPORTED, MIN_RECOMMENDED = (3, 7), (3, 8)
+    MIN_SUPPORTED, MIN_RECOMMENDED = (3, 8), (3, 8)
 
     if sys.version_info > MIN_RECOMMENDED:
         return None
@@ -140,16 +140,8 @@ def _get_system_deprecation():
     if sys.version_info < MIN_SUPPORTED:
         msg = f'Python version {major}.{minor} is no longer supported'
     else:
-        msg = f'Support for Python version {major}.{minor} has been deprecated. '
-        # Temporary until `win_x86_exe` uses 3.8, which will deprecate Vista and Server 2008
-        if detect_variant() == 'win_x86_exe':
-            platform_name = platform.platform()
-            if any(platform_name.startswith(f'Windows-{name}') for name in ('Vista', '2008Server')):
-                msg = 'Support for Windows Vista/Server 2008 has been deprecated. '
-            else:
-                return None
-        msg += ('See  https://github.com/yt-dlp/yt-dlp/issues/7803  for details.'
-                '\nYou may stop receiving updates on this version at any time')
+        msg = (f'Support for Python version {major}.{minor} has been deprecated. '
+               '\nYou may stop receiving updates on this version at any time')
 
     major, minor = MIN_RECOMMENDED
     return f'{msg}! Please update to Python {major}.{minor} or above'
@@ -214,13 +206,14 @@ class Updater:
     # XXX: use class variables to simplify testing
     _channel = CHANNEL
     _origin = ORIGIN
+    _update_sources = UPDATE_SOURCES
 
     def __init__(self, ydl, target: str | None = None):
         self.ydl = ydl
         # For backwards compat, target needs to be treated as if it could be None
         self.requested_channel, sep, self.requested_tag = (target or self._channel).rpartition('@')
         # Check if requested_tag is actually the requested repo/channel
-        if not sep and ('/' in self.requested_tag or self.requested_tag in UPDATE_SOURCES):
+        if not sep and ('/' in self.requested_tag or self.requested_tag in self._update_sources):
             self.requested_channel = self.requested_tag
             self.requested_tag: str = None  # type: ignore (we set it later)
         elif not self.requested_channel:
@@ -245,11 +238,11 @@ class Updater:
                 self._block_restart('Automatically restarting into custom builds is disabled for security reasons')
         else:
             # Check if requested_channel resolves to a known repository or else raise
-            self.requested_repo = UPDATE_SOURCES.get(self.requested_channel)
+            self.requested_repo = self._update_sources.get(self.requested_channel)
             if not self.requested_repo:
                 self._report_error(
                     f'Invalid update channel {self.requested_channel!r} requested. '
-                    f'Valid channels are {", ".join(UPDATE_SOURCES)}', True)
+                    f'Valid channels are {", ".join(self._update_sources)}', True)
 
         self._identifier = f'{detect_variant()} {system_identifier()}'
 
