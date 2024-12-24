@@ -4,6 +4,36 @@
 # To create a release, dispatch the https://github.com/yt-dlp/yt-dlp/actions/workflows/release.yml workflow on master
 -->
 
+### 2024.12.23
+
+#### Core changes
+- [Don't sanitize filename on Unix when `--no-windows-filenames`](https://github.com/yt-dlp/yt-dlp/commit/6fc85f617a5850307fd5b258477070e6ee177796) ([#9591](https://github.com/yt-dlp/yt-dlp/issues/9591)) by [pukkandan](https://github.com/pukkandan)
+- **update**
+    - [Check 64-bitness when upgrading ARM builds](https://github.com/yt-dlp/yt-dlp/commit/b91c3925c2059970daa801cb131c0c2f4f302e72) ([#11819](https://github.com/yt-dlp/yt-dlp/issues/11819)) by [bashonly](https://github.com/bashonly)
+    - [Fix endless update loop for `linux_exe` builds](https://github.com/yt-dlp/yt-dlp/commit/3d3ee458c1fe49dd5ebd7651a092119d23eb7000) ([#11827](https://github.com/yt-dlp/yt-dlp/issues/11827)) by [bashonly](https://github.com/bashonly)
+
+#### Extractor changes
+- **soundcloud**: [Various fixes](https://github.com/yt-dlp/yt-dlp/commit/d298693b1b266d198e8eeecb90ea17c4a031268f) ([#11820](https://github.com/yt-dlp/yt-dlp/issues/11820)) by [bashonly](https://github.com/bashonly)
+- **youtube**
+    - [Add age-gate workaround for some embeddable videos](https://github.com/yt-dlp/yt-dlp/commit/09a6c687126f04e243fcb105a828787efddd1030) ([#11821](https://github.com/yt-dlp/yt-dlp/issues/11821)) by [bashonly](https://github.com/bashonly)
+    - [Fix `uploader_id` extraction](https://github.com/yt-dlp/yt-dlp/commit/1a8851b689763e5173b96f70f8a71df0e4a44b66) ([#11818](https://github.com/yt-dlp/yt-dlp/issues/11818)) by [bashonly](https://github.com/bashonly)
+    - [Player client maintenance](https://github.com/yt-dlp/yt-dlp/commit/65cf46cddd873fd229dbb0fc0689bca4c201c6b6) ([#11893](https://github.com/yt-dlp/yt-dlp/issues/11893)) by [bashonly](https://github.com/bashonly)
+    - [Skip iOS formats that require PO Token](https://github.com/yt-dlp/yt-dlp/commit/9f42e68a74f3f00b0253fe70763abd57cac4237b) ([#11890](https://github.com/yt-dlp/yt-dlp/issues/11890)) by [coletdjnz](https://github.com/coletdjnz)
+
+### 2024.12.13
+
+#### Extractor changes
+- **patreon**: campaign: [Support /c/ URLs](https://github.com/yt-dlp/yt-dlp/commit/bc262bcad4d3683ceadf61a7eb87e233e72adef3) ([#11756](https://github.com/yt-dlp/yt-dlp/issues/11756)) by [bashonly](https://github.com/bashonly)
+- **soundcloud**: [Fix extraction](https://github.com/yt-dlp/yt-dlp/commit/f4d3e9e6dc25077b79849a31a2f67f93fdc01e62) ([#11777](https://github.com/yt-dlp/yt-dlp/issues/11777)) by [bashonly](https://github.com/bashonly)
+- **youtube**
+    - [Fix `release_date` extraction](https://github.com/yt-dlp/yt-dlp/commit/d5e2a379f2adcb28bc48c7d9e90716d7278f89d2) ([#11759](https://github.com/yt-dlp/yt-dlp/issues/11759)) by [MutantPiggieGolem1](https://github.com/MutantPiggieGolem1)
+    - [Fix signature function extraction for `2f1832d2`](https://github.com/yt-dlp/yt-dlp/commit/5460cd91891bf613a2065e2fc278d9903c37a127) ([#11801](https://github.com/yt-dlp/yt-dlp/issues/11801)) by [bashonly](https://github.com/bashonly)
+    - [Prioritize original language over auto-dubbed audio](https://github.com/yt-dlp/yt-dlp/commit/dc3c4fddcc653989dae71fc563d82a308fc898cc) ([#11803](https://github.com/yt-dlp/yt-dlp/issues/11803)) by [bashonly](https://github.com/bashonly)
+    - search_url: [Fix playlist searches](https://github.com/yt-dlp/yt-dlp/commit/f6c73aad5f1a67544bea137ebd9d1e22e0e56567) ([#11782](https://github.com/yt-dlp/yt-dlp/issues/11782)) by [Crypto90](https://github.com/Crypto90)
+
+#### Misc. changes
+- **cleanup**: [Make more playlist entries lazy](https://github.com/yt-dlp/yt-dlp/commit/54216696261bc07cacd9a837c501d9e0b7fed09e) ([#11763](https://github.com/yt-dlp/yt-dlp/issues/11763)) by [seproDev](https://github.com/seproDev)
+
 ### 2024.12.06
 
 #### Core changes
