@@ -1,3 +1,4 @@
+import re
 import functools
 
 from .common import InfoExtractor
@@ -203,6 +204,10 @@ class FloatplaneIE(InfoExtractor):
         for media in traverse_obj(post_data, (('videoAttachments', 'audioAttachments'), ...)):
             media_id = media['id']
             media_typ = media.get('type') or 'video'
+            media_title = media.get('title')
+            if media_title and re.match('^Captioned ', media_title, re.I):
+                self.to_screen('Skipping captioned video attachment: ' + media_title)
+                continue
 
             metadata = self._download_json(
                 f'https://www.floatplane.com/api/v3/content/{media_typ}', media_id, query={'id': media_id},
