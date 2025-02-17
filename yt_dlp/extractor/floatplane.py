@@ -205,7 +205,7 @@ class FloatplaneIE(InfoExtractor):
             media_id = media['id']
             media_typ = media.get('type') or 'video'
             media_title = media.get('title')
-            if media_title and re.match('^Captioned ', media_title, re.I):
+            if media_title and (re.match('^Captioned( |$)', media_title, re.I) or re.match('.* Captioned$', media_title, re.I)):
                 self.to_screen('Skipping captioned video attachment: ' + media_title)
                 continue
 
