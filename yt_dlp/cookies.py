@@ -2,9 +2,11 @@ import base64
 import collections
 import contextlib
 import datetime as dt
+import traceback
 import functools
 import glob
 import hashlib
+import socket
 import http.cookiejar
 import http.cookies
 import io
@@ -99,13 +101,17 @@ def load_cookies(cookie_file, browser_specification, ydl):
                 extract_cookies_from_browser(browser_name, profile, YDLLogger(ydl), keyring=keyring, container=container))
 
         if cookie_file is not None:
-            is_filename = is_path_like(cookie_file)
-            if is_filename:
-                cookie_file = expand_path(cookie_file)
-
-            jar = YoutubeDLCookieJar(cookie_file)
-            if not is_filename or os.access(cookie_file, os.R_OK):
+            if ':' in cookie_file:
+                jar = RemoteCookieJar(cookie_file)
                 jar.load()
+            else:
+                is_filename = is_path_like(cookie_file)
+                if is_filename:
+                    cookie_file = expand_path(cookie_file)
+
+                jar = YoutubeDLCookieJar(cookie_file)
+                if not is_filename or os.access(cookie_file, os.R_OK):
+                    jar.load()
             cookie_jars.append(jar)
 
         return _merge_cookie_jars(cookie_jars)
@@ -1125,6 +1131,8 @@ def _find_files(root, filename, logger):
 
 
 def _merge_cookie_jars(jars):
+    if len(jars) == 1:
+        return jars[0]
     output_jar = YoutubeDLCookieJar()
     for jar in jars:
         for cookie in jar:
@@ -1384,3 +1392,496 @@ class YoutubeDLCookieJar(http.cookiejar.MozillaCookieJar):
     def clear(self, *args, **kwargs):
         with contextlib.suppress(KeyError):
             return super().clear(*args, **kwargs)
+
+
+class RemoteCookieJar(YoutubeDLCookieJar):
+    """CookieJar that loads and saves remotely to my Cookie Server browser extension."""
+
+    def __init__(self, filename=None, *args, **kwargs):
+        super().__init__(None, *args, **kwargs)
+        if ':' in filename:
+            try:
+                self.host, self.port = filename.split(':')
+            except ValueError:
+                self.host = None
+                self.port = None
+        else:
+            self.host = None
+            self.port = None
+        self.sock = None
+        if not self.host and is_path_like(filename):
+            filename = os.fspath(filename)
+        self.filename = filename
+        self.orig_cookies = {}
+        self.lastRequestId = 0
+
+    # def save(self, filename=None, ignore_discard=True, ignore_expires=True):
+    #     """Save cookies to the server."""
+    #
+    #     if filename is not None:
+    #         if ':' in filename:
+    #             try:
+    #                 host, port = filename.split(':')
+    #             except ValueError:
+    #                 host = None
+    #                 port = None
+    #         else:
+    #             return super().save(filename, ignore_discard, ignore_expires)
+    #     else:
+    #         if self.filename is not None:
+    #             filename = self.filename
+    #             host = self.host
+    #             port = self.port
+    #         else:
+    #             raise ValueError(http.cookiejar.MISSING_FILENAME_TEXT)
+    #
+    #     if not host or not port:
+    #         return super().save(filename, ignore_discard, ignore_expires)
+    #
+    #     # cookie_data = []
+    #     now = time.time()
+    #     for cookie in self:
+    #         if ((not ignore_discard and cookie.discard)
+    #                 or (not ignore_expires and cookie.is_expired(now))):
+    #             continue
+    #
+    #         name, value = cookie.name, cookie.value
+    #         if value is None:
+    #             # cookies.txt regards 'Set-Cookie: foo' as a cookie
+    #             # with no name, whereas http.cookiejar regards it as a
+    #             # cookie with no value.
+    #             name, value = '', name
+    #
+    #         if cookie.domain not in self.orig_cookies:
+    #             continue
+    #         orig_value = None
+    #         for orig_cookie in self.orig_cookies[cookie.domain]:
+    #             if orig_cookie.name == name:
+    #                 orig_value = orig_cookie.value
+    #                 break
+    #         if value == orig_value:
+    #             continue
+    #
+    #         cdata = {
+    #             'name': name,
+    #             'value': value,
+    #             'url': ('https://' if cookie.secure else 'http://') + cookie.domain.lstrip('.') + cookie.path,
+    #             'secure': cookie.secure,
+    #         }
+    #         # if cookie.domain.startswith('.'):
+    #         if cookie.domain_specified:
+    #             cdata['domain'] = cookie.domain
+    #         if cookie.has_nonstandard_attr(http.cookiejar.HTTPONLY_ATTR):
+    #             cdata['httpOnly'] = cookie.get_nonstandard_attr(http.cookiejar.HTTPONLY_ATTR)
+    #         if cookie.expires and not cookie.discard:
+    #             cdata['expirationDate'] = cookie.expires
+    #         print("Would save cookie data:", json.dumps(cdata, indent=4))
+    #         # cookie_data.append(cdata)
+    #
+    #     # # Save to server
+    #     # with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    #     #     sock.connect((host, int(port)))
+    #     #
+    #     #     for cdata in cookie_data:
+    #     #         req = {
+    #     #             "type": "setCookie",
+    #     #             "cookie": cdata
+    #     #         }
+    #     #         req = json.dumps(req).encode() + b'\n'
+    #     #         sock.send(req)
+    #     #
+    #     #         resp = sock.recv(1024)
+    #     #         resp = json.loads(resp.decode())
+    #     #         if 'type' not in resp:
+    #     #             raise ValueError('Invalid response from cookie server: missing type field')
+    #     #         if not isinstance(resp['type'], str):
+    #     #             raise ValueError('Invalid response from cookie server: type field is not a string')
+    #     #         if resp['type'] == 'setCookieErrorResponse':
+    #     #             raise ValueError('Error response from cookie server: ' + ((resp['error'] or 'unknown error') if 'error' in resp else 'unknown error'))
+    #     #         elif resp['type'] != 'setCookieSuccessResponse':
+    #     #             raise ValueError('Invalid response type from cookie server: ' + resp['type'])
+    #
+    # def load(self, filename=None, ignore_discard=True, ignore_expires=True):
+    #     """Load cookies from the server."""
+    #
+    #     if filename is not None:
+    #         if ':' in filename:
+    #             try:
+    #                 host, port = filename.split(':')
+    #             except ValueError:
+    #                 host = None
+    #                 port = None
+    #         else:
+    #             return super().save(filename, ignore_discard, ignore_expires)
+    #     else:
+    #         if self.filename is not None:
+    #             filename = self.filename
+    #             host = self.host
+    #             port = self.port
+    #         else:
+    #             raise ValueError(http.cookiejar.MISSING_FILENAME_TEXT)
+    #
+    #     if not host or not port:
+    #         return super().load(filename, ignore_discard, ignore_expires)
+    #
+    #     try:
+    #         # Load from server
+    #         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    #             sock.connect((host, int(port)))
+    #
+    #             req = {
+    #                 "type": "getCookies",
+    #                 "query": {
+    #                     # "url": "https://youtube.com",
+    #                     "firstPartyDomain": None
+    #                 }
+    #             }
+    #             req = json.dumps(req).encode() + b'\n'
+    #             sock.send(req)
+    #
+    #             resp = bytes()
+    #             while True:
+    #                 buf = sock.recv(16384)
+    #                 if not buf:
+    #                     break
+    #                 # end = len(buf) < 16384
+    #                 end = b'\n' in buf
+    #                 resp += buf
+    #                 if end:
+    #                     break
+    #             resp = json.loads(resp.decode())
+    #             if 'type' not in resp:
+    #                 raise ValueError('Invalid response from cookie server: missing type field')
+    #             if not isinstance(resp['type'], str):
+    #                 raise ValueError('Invalid response from cookie server: type field is not a string')
+    #             if resp['type'] == 'getCookiesErrorResponse':
+    #                 raise ValueError('Error response from cookie server: ' + ((resp['error'] or 'unknown error') if 'error' in resp else 'unknown error'))
+    #             elif resp['type'] != 'getCookiesSuccessResponse':
+    #                 raise ValueError('Invalid response type from cookie server: ' + resp['type'])
+    #             if 'cookies' not in resp:
+    #                 raise ValueError('Invalid response from cookie server: missing cookies field')
+    #             if not isinstance(resp['cookies'], list):
+    #                 raise ValueError('Invalid response from cookie server: cookies field is not an array')
+    #
+    #             cookie_data = resp['cookies']
+    #     except Exception as e:
+    #         raise CookieLoadError('Failed to download cookies from server: ' + str(e) + '\n' + traceback.format_exc())
+    #
+    #     self.orig_cookies = {}
+    #     now = time.time()
+    #     for cdata in cookie_data:
+    #         domain = cdata['domain'] if (
+    #             'domain' in cdata and isinstance(cdata['domain'], str)) else ''
+    #         initial_dot = domain.startswith('.')
+    #         domain_specified = not cdata['hostOnly'] if (
+    #             'hostOnly' in cdata and type(cdata['hostOnly']) == bool) else initial_dot
+    #         path = cdata['path'] if (
+    #             'path' in cdata and isinstance(cdata['path'], str)) else ''
+    #         secure = 'secure' in cdata and type(cdata['secure']) == bool and cdata['secure']
+    #         expires = cdata['expirationDate'] if (
+    #             'expirationDate' in cdata and type(cdata['expirationDate']) == int) else None
+    #         session = cdata['session'] if (
+    #             'session' in cdata and type(cdata['session']) == bool) else (expires == None or expires == 0)
+    #         name = cdata['name'] if (
+    #             'name' in cdata and isinstance(cdata['name'], str)) else ''
+    #         value = cdata['value'] if (
+    #             'value' in cdata and isinstance(cdata['value'], str)) else ''
+    #
+    #         rest = {}
+    #         if 'httpOnly' in cdata and type(cdata['httpOnly']) == bool and cdata['httpOnly']:
+    #             rest[http.cookiejar.HTTPONLY_ATTR] = ""
+    #
+    #         if name == "":
+    #             # cookies.txt regards 'Set-Cookie: foo' as a cookie
+    #             # with no name, whereas http.cookiejar regards it as a
+    #             # cookie with no value.
+    #             name = value
+    #             value = None
+    #
+    #         assert domain_specified == initial_dot
+    #
+    #         discard = False
+    #
+    #         # Session cookies are denoted by either `expires` field set to
+    #         # an empty string or 0. MozillaCookieJar only recognizes the former
+    #         # (see [1]). So we need force the latter to be recognized as session
+    #         # cookies on our own.
+    #         # Session cookies may be important for cookies-based authentication,
+    #         # e.g. usually, when user does not check 'Remember me' check box while
+    #         # logging in on a site, some important cookies are stored as session
+    #         # cookies so that not recognizing them will result in failed login.
+    #         # 1. https://bugs.python.org/issue17164
+    #
+    #         # Treat `expires=0` cookies as session cookies
+    #         if session:
+    #             expires = None
+    #             discard = True
+    #
+    #         # assume path_specified is false
+    #         c = http.cookiejar.Cookie(0, name, value,
+    #                     None, False,
+    #                     domain, domain_specified, initial_dot,
+    #                     path, False,
+    #                     secure,
+    #                     expires,
+    #                     discard,
+    #                     None,
+    #                     None,
+    #                     rest)
+    #         if not ignore_discard and c.discard:
+    #             continue
+    #         if not ignore_expires and c.is_expired(now):
+    #             continue
+    #         if domain in self.orig_cookies:
+    #             self.orig_cookies[domain].append(c)
+    #         else:
+    #             self.orig_cookies = [c]
+    #         self.set_cookie(c)
+
+    def log_debug(self, msg):
+        # print(msg)
+        pass
+
+    def save(self, filename=None, ignore_discard=True, ignore_expires=True):
+        """Do nothing for remote server, or call super if local cookie jar."""
+
+        if filename is not None:
+            if ':' in filename:
+                try:
+                    host, port = filename.split(':')
+                except ValueError:
+                    host = None
+                    port = None
+            else:
+                return super().save(filename, ignore_discard, ignore_expires)
+        else:
+            if self.filename is not None:
+                filename = self.filename
+                host = self.host
+                port = self.port
+            else:
+                raise ValueError(http.cookiejar.MISSING_FILENAME_TEXT)
+
+        if not host or not port:
+            return super().save(filename, ignore_discard, ignore_expires)
+
+    def load(self, filename=None, ignore_discard=True, ignore_expires=True):
+        """Connect to remote server, or call super if local cookie jar."""
+
+        if filename is not None:
+            if ':' in filename:
+                try:
+                    host, port = filename.split(':')
+                except ValueError:
+                    host = None
+                    port = None
+            else:
+                return super().save(filename, ignore_discard, ignore_expires)
+        else:
+            if self.filename is not None:
+                filename = self.filename
+                host = self.host
+                port = self.port
+            else:
+                raise ValueError(http.cookiejar.MISSING_FILENAME_TEXT)
+
+        if not host or not port:
+            return super().load(filename, ignore_discard, ignore_expires)
+
+        self.host = host
+        self.port = port
+        self.lastRequestId = 0
+        self.log_debug(f"[remote] connecting to cookie server {host}:{port}")
+        try:
+            if self.sock:
+                self.sock.close()
+            # Connect to server
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((host, int(port)))
+        except Exception as e:
+            raise CookieLoadError('Failed to connect to cookie server: ' + str(e) + '\n' + traceback.format_exc())
+
+    def _cookies_for_domain(self, domain, request):
+        self.log_debug(f"[remote] _cookies_for_domain: domain={domain}, req url: {request.get_full_url()}")
+        if not self._policy.domain_return_ok(domain, request):
+            return []
+        req_path = http.cookiejar.request_path(request)
+
+        if not self.sock:
+            self.lastRequestId = 0
+            self.log_debug(f"[remote] connecting to cookie server {self.host}:{self.port}")
+            try:
+                # Connect to server
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.connect((self.host, int(self.port)))
+            except Exception as e:
+                raise CookieLoadError('Failed to connect to cookie server: ' + str(e) + '\n' + traceback.format_exc())
+
+        try:
+            self.log_debug(f"[remote] requesting cookies for {request.type}://{domain}{req_path}")
+            self.lastRequestId += 1
+            req = {
+                "id": self.lastRequestId,
+                "method": "getCookies",
+                "query": {
+                    "url": f"{request.type}://{domain}{req_path}",
+                }
+            }
+            req = json.dumps(req).encode() + b'\n'
+            self.sock.send(req)
+
+            resp = bytes()
+            while True:
+                buf = self.sock.recv(16384)
+                if not buf:
+                    break
+                # end = len(buf) < 16384
+                end = b'\n' in buf
+                resp += buf
+                if end:
+                    break
+            resp = json.loads(resp.decode())
+            if 'method' not in resp:
+                raise ValueError('Invalid response from cookie server: missing method field')
+            if not isinstance(resp['method'], str):
+                raise ValueError('Invalid response from cookie server: method field is not a string')
+            if resp['method'] == 'getCookiesErrorResponse':
+                raise ValueError('Error response from cookie server: ' + ((resp['error'] or 'unknown error') if 'error' in resp else 'unknown error'))
+            elif resp['method'] != 'getCookiesSuccessResponse':
+                raise ValueError('Invalid response method from cookie server: ' + resp['method'])
+            if 'cookies' not in resp:
+                raise ValueError('Invalid response from cookie server: missing cookies field')
+            if not isinstance(resp['cookies'], list):
+                raise ValueError('Invalid response from cookie server: cookies field is not an array')
+
+            cookie_data = resp['cookies']
+            self.log_debug(f" [remote] received {len(cookie_data)} cookies")
+        except Exception as e:
+            raise CookieLoadError('Failed to download cookies from server: ' + str(e) + '\n' + traceback.format_exc())
+
+        cookies = []
+        for cdata in cookie_data:
+            domain = cdata['domain'] if (
+                'domain' in cdata and isinstance(cdata['domain'], str)) else ''
+            initial_dot = domain.startswith('.')
+            domain_specified = not cdata['hostOnly'] if (
+                'hostOnly' in cdata and type(cdata['hostOnly']) == bool) else initial_dot
+            path = cdata['path'] if (
+                'path' in cdata and isinstance(cdata['path'], str)) else ''
+            secure = 'secure' in cdata and type(cdata['secure']) == bool and cdata['secure']
+            expires = cdata['expirationDate'] if (
+                'expirationDate' in cdata and type(cdata['expirationDate']) == int) else None
+            session = cdata['session'] if (
+                'session' in cdata and type(cdata['session']) == bool) else (expires == None or expires == 0)
+            name = cdata['name'] if (
+                'name' in cdata and isinstance(cdata['name'], str)) else ''
+            value = cdata['value'] if (
+                'value' in cdata and isinstance(cdata['value'], str)) else ''
+
+            rest = {}
+            if 'httpOnly' in cdata and type(cdata['httpOnly']) == bool and cdata['httpOnly']:
+                rest[http.cookiejar.HTTPONLY_ATTR] = ""
+
+            if name == "":
+                # cookies.txt regards 'Set-Cookie: foo' as a cookie
+                # with no name, whereas http.cookiejar regards it as a
+                # cookie with no value.
+                name = value
+                value = None
+
+            assert domain_specified == initial_dot
+
+            discard = False
+
+            # Session cookies are denoted by either `expires` field set to
+            # an empty string or 0. MozillaCookieJar only recognizes the former
+            # (see [1]). So we need force the latter to be recognized as session
+            # cookies on our own.
+            # Session cookies may be important for cookies-based authentication,
+            # e.g. usually, when user does not check 'Remember me' check box while
+            # logging in on a site, some important cookies are stored as session
+            # cookies so that not recognizing them will result in failed login.
+            # 1. https://bugs.python.org/issue17164
+
+            # Treat `expires=0` cookies as session cookies
+            if session:
+                expires = None
+                discard = True
+
+            # assume path_specified is false
+            c = http.cookiejar.Cookie(
+                0, name, value,
+                None, False,
+                domain, domain_specified, initial_dot,
+                path, False,
+                secure,
+                expires,
+                discard,
+                None,
+                None,
+                rest
+            )
+            self.log_debug(" [remote] got cookie from server: " + str(c))
+            self.set_cookie(c)
+
+            if not self._policy.path_return_ok(path, request):
+                self.log_debug(" [remote] ignoring cookie due to path policy: cookie_path={path}, request_path={req_path}")
+                continue
+            if not self._policy.return_ok(c, request):
+                self.log_debug(" [remote] ignoring cookie due to other policy:\n  cookie={c}\n  request={request}")
+                continue
+            cookies.append(c)
+        return cookies
+
+    def _cookies_for_request(self, request):
+        """Return a list of cookies to be returned to HTTP server."""
+        self.log_debug(f"[remote] _cookies_for_request: {request.get_method()}  {request.get_full_url()}")
+        req_host = http.cookiejar.request_host(request)
+        cookies = []
+        for domain in (req_host, '.' + '.'.join(req_host.split('.')[-2:])):
+            cookies.extend(self._cookies_for_domain(domain, request))
+        return cookies
+
+    def extract_cookies(self, response, request):
+        """Extract cookies from response, where allowable given the request."""
+        self.log_debug("[remote] extract_cookies: " + str(response.info()))
+        self._cookies_lock.acquire()
+        try:
+            for cookie in self.make_cookies(response, request):
+                if self._policy.set_ok(cookie, request):
+                    self.log_debug(" [remote] setting cookie: " + str(cookie))
+                    self.set_cookie(cookie)
+        finally:
+            self._cookies_lock.release()
+
+    def clear(self, domain=None, path=None, name=None):
+        """Clear some cookies.
+
+        Invoking this method without arguments will clear all cookies.  If
+        given a single argument, only cookies belonging to that domain will be
+        removed.  If given two arguments, cookies belonging to the specified
+        path within that domain are removed.  If given three arguments, then
+        the cookie with the specified name, path and domain is removed.
+
+        Raises KeyError if no matching cookie exists.
+
+        """
+
+        if name is not None:
+            if (domain is None) or (path is None):
+                raise ValueError(
+                    "domain and path must be given to remove a cookie by name")
+            self.log_debug(f"[remote] clearing cookie: domain={domain}, path={path}, name={name}")
+            del self._cookies[domain][path][name]
+        elif path is not None:
+            if domain is None:
+                raise ValueError(
+                    "domain must be given to remove cookies by path")
+            self.log_debug(f"[remote] clearing cookies: domain={domain}, path={path}")
+            del self._cookies[domain][path]
+        elif domain is not None:
+            self.log_debug(f"[remote] clearing cookies: domain={domain}")
+            del self._cookies[domain]
+        else:
+            self.log_debug(f"[remote] clearing all cookies")
+            self._cookies = {}
