@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import publicsuffix2
 import urllib.request
 from enum import Enum, auto
 
@@ -1401,6 +1402,10 @@ class RemoteCookieJar(YoutubeDLCookieJar):
         super().__init__(None, *args, **kwargs)
         if ':' in filename:
             try:
+                if '::' in filename:
+                    filename, self.containerName = filename.split('::')
+                else:
+                    self.containerName = None
                 self.host, self.port = filename.split(':')
             except ValueError:
                 self.host = None
@@ -1408,6 +1413,9 @@ class RemoteCookieJar(YoutubeDLCookieJar):
         else:
             self.host = None
             self.port = None
+            self.containerName = None
+        self.cookie_store_id = None
+
         self.sock = None
         if not self.host and is_path_like(filename):
             filename = os.fspath(filename)
@@ -1648,10 +1656,15 @@ class RemoteCookieJar(YoutubeDLCookieJar):
         if filename is not None:
             if ':' in filename:
                 try:
+                    if '::' in filename:
+                        filename, containerName = filename.split('::')
+                    else:
+                        containerName = None
                     host, port = filename.split(':')
                 except ValueError:
                     host = None
                     port = None
+                    containerName = None
             else:
                 return super().save(filename, ignore_discard, ignore_expires)
         else:
@@ -1659,6 +1672,7 @@ class RemoteCookieJar(YoutubeDLCookieJar):
                 filename = self.filename
                 host = self.host
                 port = self.port
+                containerName = self.containerName
             else:
                 raise ValueError(http.cookiejar.MISSING_FILENAME_TEXT)
 
@@ -1671,10 +1685,15 @@ class RemoteCookieJar(YoutubeDLCookieJar):
         if filename is not None:
             if ':' in filename:
                 try:
+                    if '::' in filename:
+                        filename, containerName = filename.split('::')
+                    else:
+                        containerName = None
                     host, port = filename.split(':')
                 except ValueError:
                     host = None
                     port = None
+                    containerName = None
             else:
                 return super().save(filename, ignore_discard, ignore_expires)
         else:
@@ -1682,6 +1701,7 @@ class RemoteCookieJar(YoutubeDLCookieJar):
                 filename = self.filename
                 host = self.host
                 port = self.port
+                containerName = self.containerName
             else:
                 raise ValueError(http.cookiejar.MISSING_FILENAME_TEXT)
 
@@ -1690,6 +1710,7 @@ class RemoteCookieJar(YoutubeDLCookieJar):
 
         self.host = host
         self.port = port
+        self.containerName = containerName
         self.lastRequestId = 0
         self.log_debug(f"[remote] connecting to cookie server {host}:{port}")
         try:
@@ -1701,21 +1722,81 @@ class RemoteCookieJar(YoutubeDLCookieJar):
         except Exception as e:
             raise CookieLoadError('Failed to connect to cookie server: ' + str(e) + '\n' + traceback.format_exc())
 
+        try:
+            self._get_contextual_identity()
+        except Exception as e:
+            raise CookieLoadError('Failed to get contextual identity from cookie server: ' + str(e) + '\n' + traceback.format_exc())
+
+    def _get_contextual_identity(self):
+        if self.containerName:
+            self.log_debug(f"[remote] requesting contextual identity named {self.containerName}")
+            self.lastRequestId += 1
+            req = {
+                "id": self.lastRequestId,
+                "method": "queryContextualIdentities",
+                "query": {
+                    "name": self.containerName
+                }
+            }
+            req = json.dumps(req).encode() + b'\n'
+            self.sock.send(req)
+            del req
+
+            resp = bytes()
+            while True:
+                buf = self.sock.recv(16384)
+                if not buf:
+                    break
+                # end = len(buf) < 16384
+                end = b'\n' in buf
+                resp += buf
+                if end:
+                    break
+            resp = json.loads(resp.decode())
+            if 'method' not in resp:
+                raise ValueError('Invalid response from cookie server: missing method field')
+            if not isinstance(resp['method'], str):
+                raise ValueError('Invalid response from cookie server: method field is not a string')
+            if resp['method'] == 'queryContextualIdentitiesErrorResponse':
+                raise ValueError('Error response from cookie server: ' + ((resp['error'] or 'unknown error') if 'error' in resp else 'unknown error'))
+            elif resp['method'] != 'queryContextualIdentitiesSuccessResponse':
+                raise ValueError('Invalid response method from cookie server: ' + resp['method'])
+            if 'contextualIdentities' not in resp:
+                raise ValueError('Invalid response from cookie server: missing contextualIdentities field')
+            if not isinstance(resp['contextualIdentities'], list):
+                raise ValueError('Invalid response from cookie server: contextualIdentities field is not an array')
+
+            contextual_identity_data = resp['contextualIdentities']
+            del resp
+            self.log_debug(f" [remote] received {len(contextual_identity_data)} contextual identities")
+
+            for contextual_identity in contextual_identity_data:
+                if contextual_identity['name'] == self.containerName:
+                    self.cookie_store_id = contextual_identity['cookieStoreId']
+                    break
+
+    def _ensure_connected(self):
+        if not self.sock:
+            self.lastRequestId = 0
+            self.log_debug(f"[remote] connecting to cookie server {self.host}:{self.port}")
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.connect((self.host, int(self.port)))
+
+            try:
+                self._get_contextual_identity()
+            except Exception as e:
+                raise CookieLoadError('Failed to get contextual identity from cookie server: ' + str(e) + '\n' + traceback.format_exc())
+
     def _cookies_for_domain(self, domain, request):
         self.log_debug(f"[remote] _cookies_for_domain: domain={domain}, req url: {request.get_full_url()}")
         if not self._policy.domain_return_ok(domain, request):
             return []
         req_path = http.cookiejar.request_path(request)
 
-        if not self.sock:
-            self.lastRequestId = 0
-            self.log_debug(f"[remote] connecting to cookie server {self.host}:{self.port}")
-            try:
-                # Connect to server
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.sock.connect((self.host, int(self.port)))
-            except Exception as e:
-                raise CookieLoadError('Failed to connect to cookie server: ' + str(e) + '\n' + traceback.format_exc())
+        try:
+            self._ensure_connected()
+        except Exception as e:
+            raise CookieLoadError('Failed to connect to cookie server: ' + str(e) + '\n' + traceback.format_exc())
 
         try:
             self.log_debug(f"[remote] requesting cookies for {request.type}://{domain}{req_path}")
@@ -1724,11 +1805,14 @@ class RemoteCookieJar(YoutubeDLCookieJar):
                 "id": self.lastRequestId,
                 "method": "getCookies",
                 "query": {
-                    "url": f"{request.type}://{domain}{req_path}",
+                    "url": f"{request.type}://{domain}{req_path}"
                 }
             }
+            if self.cookie_store_id:
+                req["query"]["storeId"] = self.cookie_store_id
             req = json.dumps(req).encode() + b'\n'
             self.sock.send(req)
+            del req
 
             resp = bytes()
             while True:
@@ -1755,6 +1839,7 @@ class RemoteCookieJar(YoutubeDLCookieJar):
                 raise ValueError('Invalid response from cookie server: cookies field is not an array')
 
             cookie_data = resp['cookies']
+            del resp
             self.log_debug(f" [remote] received {len(cookie_data)} cookies")
         except Exception as e:
             raise CookieLoadError('Failed to download cookies from server: ' + str(e) + '\n' + traceback.format_exc())
@@ -1836,21 +1921,99 @@ class RemoteCookieJar(YoutubeDLCookieJar):
     def _cookies_for_request(self, request):
         """Return a list of cookies to be returned to HTTP server."""
         self.log_debug(f"[remote] _cookies_for_request: {request.get_method()}  {request.get_full_url()}")
-        req_host = http.cookiejar.request_host(request)
-        cookies = []
-        for domain in (req_host, '.' + '.'.join(req_host.split('.')[-2:])):
-            cookies.extend(self._cookies_for_domain(domain, request))
-        return cookies
+        # req_host = http.cookiejar.request_host(request)
+        #
+        # public_suffix = publicsuffix2.get_sld(req_host)
+        # req_host_parts = req_host.split('.')
+        # try_hosts = [req_host]
+        # for i in range(len(req_host_parts) - 1):
+        #     cur_domain = '.'.join(req_host_parts[i+1:])
+        #     if not cur_domain.endswith(public_suffix):
+        #         break
+        #     try_hosts.append(cur_domain)
+        # try_hosts.append('.' + public_suffix)
+        #
+        # cookies = []
+        # for domain in try_hosts:
+        #     cookies.extend(self._cookies_for_domain(domain, request))
+        # return cookies
+        return self._cookies_for_domain(http.cookiejar.request_host(request), request)
 
     def extract_cookies(self, response, request):
         """Extract cookies from response, where allowable given the request."""
-        self.log_debug("[remote] extract_cookies: " + str(response.info()))
+        self.log_debug(f"[remote] extract_cookies url={request.get_full_url()}: " + str(response.info()))
+
+        try:
+            self._ensure_connected()
+        except Exception as e:
+            raise CookieLoadError('Failed to connect to cookie server: ' + str(e) + '\n' + traceback.format_exc())
+
         self._cookies_lock.acquire()
         try:
             for cookie in self.make_cookies(response, request):
                 if self._policy.set_ok(cookie, request):
                     self.log_debug(" [remote] setting cookie: " + str(cookie))
                     self.set_cookie(cookie)
+
+                    try:
+                        name, value = cookie.name, cookie.value
+                        if value is None:
+                            # cookies.txt regards 'Set-Cookie: foo' as a cookie
+                            # with no name, whereas http.cookiejar regards it as a
+                            # cookie with no value.
+                            name, value = '', name
+
+                        cdata = {
+                            'name': name,
+                            'value': value,
+                            'url': f"{request.type}://{cookie.domain.lstrip('.')}{cookie.path}",
+                            'secure': cookie.secure,
+                        }
+                        # if cookie.domain.startswith('.'):
+                        if cookie.domain_specified:
+                            cdata['domain'] = cookie.domain
+                        if cookie.has_nonstandard_attr(http.cookiejar.HTTPONLY_ATTR):
+                            cdata['httpOnly'] = cookie.get_nonstandard_attr(http.cookiejar.HTTPONLY_ATTR)
+                        if cookie.expires and not cookie.discard:
+                            cdata['expirationDate'] = cookie.expires
+                        self.log_debug(" [remote] cookie data: " + json.dumps(cdata, indent=4))
+
+                        if self.cookie_store_id:
+                            cdata["storeId"] = self.cookie_store_id
+
+                        self.lastRequestId += 1
+                        req = {
+                            "id": self.lastRequestId,
+                            "method": "setCookie",
+                            "cookie": cdata
+                        }
+                        del cdata
+                        req = json.dumps(req).encode() + b'\n'
+                        self.sock.send(req)
+                        del req
+
+                        resp = bytes()
+                        while True:
+                            buf = self.sock.recv(16384)
+                            if not buf:
+                                break
+                            # end = len(buf) < 16384
+                            end = b'\n' in buf
+                            resp += buf
+                            if end:
+                                break
+                        resp = json.loads(resp.decode())
+                        if 'method' not in resp:
+                            raise ValueError('Invalid response from cookie server: missing method field')
+                        if not isinstance(resp['method'], str):
+                            raise ValueError('Invalid response from cookie server: method field is not a string')
+                        if resp['method'] == 'setCookieErrorResponse':
+                            raise ValueError('Error response from cookie server: ' + ((resp['error'] or 'unknown error') if 'error' in resp else 'unknown error'))
+                        elif resp['method'] != 'setCookieSuccessResponse':
+                            raise ValueError('Invalid response method from cookie server: ' + resp['method'])
+                        del resp
+                    except Exception as e:
+                        print(f'Failed to set cookie "{cookie.name}" for "{cookie.domain}" on server: {str(e)}\n{traceback.format_exc()}', file=sys.stderr)
         finally:
             self._cookies_lock.release()
 
