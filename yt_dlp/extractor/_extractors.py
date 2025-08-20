@@ -625,7 +625,10 @@ from .fancode import (
     FancodeVodIE,
 )
 from .fathom import FathomIE
-from .faulio import FaulioLiveIE
+from .faulio import (
+    FaulioIE,
+    FaulioLiveIE,
+)
 from .faz import FazIE
 from .fc2 import (
     FC2IE,
@@ -1956,6 +1959,7 @@ from .startrek import StarTrekIE
 from .startv import StarTVIE
 from .steam import (
     SteamCommunityBroadcastIE,
+    SteamCommunityIE,
     SteamIE,
 )
 from .stitcher import (
