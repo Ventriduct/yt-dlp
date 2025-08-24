@@ -102,6 +102,7 @@ def load_cookies(cookie_file, browser_specification, ydl):
                 extract_cookies_from_browser(browser_name, profile, YDLLogger(ydl), keyring=keyring, container=container))
 
         if cookie_file is not None:
+            # print(f'Load cookies: cookie_file={cookie_file}')
             if ':' in cookie_file:
                 jar = RemoteCookieJar(cookie_file)
                 jar.load()
@@ -1428,6 +1429,8 @@ class RemoteCookieJar(YoutubeDLCookieJar):
         self.orig_cookies = {}
         self.lastRequestId = 0
 
+        self.log_debug(f'[remote] init: filename={filename}, host={self.host}, port={self.port}')
+
     # def save(self, filename=None, ignore_discard=True, ignore_expires=True):
     #     """Save cookies to the server."""
     #
@@ -1658,6 +1661,8 @@ class RemoteCookieJar(YoutubeDLCookieJar):
     def save(self, filename=None, ignore_discard=True, ignore_expires=True):
         """Do nothing for remote server, or call super if local cookie jar."""
 
+        self.log_debug(f'[remote] save: filename={filename}')
+
         if filename is not None:
             if ':' in filename:
                 try:
@@ -1712,6 +1717,8 @@ class RemoteCookieJar(YoutubeDLCookieJar):
 
         if not host or not port:
             return super().load(filename, ignore_discard, ignore_expires)
+
+        self.log_debug(f'[remote] load: filename={filename}, host={host}, port={port}, containerName={containerName}')
 
         self.host = host
         self.port = port
@@ -1773,7 +1780,7 @@ class RemoteCookieJar(YoutubeDLCookieJar):
 
             contextual_identity_data = resp['contextualIdentities']
             del resp
-            self.log_debug(f" [remote] received {len(contextual_identity_data)} contextual identities")
+            self.log_debug(f"[remote] received {len(contextual_identity_data)} contextual identities")
 
             for contextual_identity in contextual_identity_data:
                 if contextual_identity['name'] == self.containerName:
