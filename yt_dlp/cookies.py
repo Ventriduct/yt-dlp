@@ -1876,7 +1876,7 @@ class RemoteCookieJar(YoutubeDLCookieJar):
                 'value' in cdata and isinstance(cdata['value'], str)) else ''
 
             rest = {}
-            if 'httpOnly' in cdata and type(cdata['httpOnly']) == bool and cdata['httpOnly']:
+            if 'HTTPONLY_ATTR' in dir(http.cookiejar) and 'httpOnly' in cdata and type(cdata['httpOnly']) == bool and cdata['httpOnly']:
                 rest[http.cookiejar.HTTPONLY_ATTR] = ""
 
             if name == "":
@@ -1984,7 +1984,7 @@ class RemoteCookieJar(YoutubeDLCookieJar):
                         # if cookie.domain.startswith('.'):
                         if cookie.domain_specified:
                             cdata['domain'] = cookie.domain
-                        if cookie.has_nonstandard_attr(http.cookiejar.HTTPONLY_ATTR):
+                        if 'HTTPONLY_ATTR' in dir(http.cookiejar) and cookie.has_nonstandard_attr(http.cookiejar.HTTPONLY_ATTR):
                             cdata['httpOnly'] = cookie.get_nonstandard_attr(http.cookiejar.HTTPONLY_ATTR)
                         if cookie.expires and not cookie.discard:
                             cdata['expirationDate'] = cookie.expires
