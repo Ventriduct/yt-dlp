@@ -133,7 +133,7 @@ def extract_cookies_from_browser(browser_name, profile=None, logger=YDLLogger(),
 
 
 def _extract_firefox_cookies(profile, container, logger):
-    MAX_SUPPORTED_DB_SCHEMA_VERSION = 16
+    MAX_SUPPORTED_DB_SCHEMA_VERSION = 17
 
     logger.info('Extracting cookies from firefox')
     if not sqlite3:
@@ -174,6 +174,8 @@ def _extract_firefox_cookies(profile, container, logger):
             db_schema_version = cursor.execute('PRAGMA user_version;').fetchone()[0]
             if db_schema_version > MAX_SUPPORTED_DB_SCHEMA_VERSION:
                 logger.warning(f'Possibly unsupported firefox cookies database version: {db_schema_version}')
+            else:
+                logger.debug(f'Firefox cookies database version: {db_schema_version}')
             if isinstance(container_id, int):
                 logger.debug(
                     f'Only loading cookies from firefox container "{container}", ID {container_id}')
@@ -565,7 +567,7 @@ class WindowsChromeCookieDecryptor(ChromeCookieDecryptor):
 
 
 def _extract_safari_cookies(profile, logger):
-    if sys.platform != 'darwin':
+    if sys.platform not in ('darwin', 'ios'):
         raise ValueError(f'unsupported platform: {sys.platform}')
 
     if profile:
